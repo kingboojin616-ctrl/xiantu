@@ -214,19 +214,19 @@ ON CONFLICT (id) DO NOTHING;
 CREATE TABLE IF NOT EXISTS player_travels (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     player_id           UUID NOT NULL REFERENCES players(id) ON DELETE CASCADE,
-    from_lat            FLOAT NOT NULL DEFAULT 34.1,
-    from_lng            FLOAT NOT NULL DEFAULT -118.2,
-    from_name           VARCHAR(100) NOT NULL DEFAULT '洛杉矶',
-    dest_type           VARCHAR(20) NOT NULL, -- 'cave' or 'city_realm'
+    from_lat            DOUBLE PRECISION NOT NULL DEFAULT 34.1,
+    from_lng            DOUBLE PRECISION NOT NULL DEFAULT -118.2,
+    from_name           VARCHAR(100) NOT NULL DEFAULT 'start',
+    dest_type           VARCHAR(20) NOT NULL,
     dest_id             VARCHAR(50) NOT NULL,
     dest_name           VARCHAR(100) NOT NULL,
-    dest_lat            FLOAT NOT NULL,
-    dest_lng            FLOAT NOT NULL,
-    distance_km         FLOAT NOT NULL,
-    travel_years        INT NOT NULL,
-    start_year          INT NOT NULL,
-    arrive_year         INT NOT NULL,
-    status              VARCHAR(20) NOT NULL DEFAULT 'traveling', -- traveling/arrived/cancelled
+    dest_lat            DOUBLE PRECISION NOT NULL DEFAULT 0,
+    dest_lng            DOUBLE PRECISION NOT NULL DEFAULT 0,
+    distance_km         DOUBLE PRECISION NOT NULL DEFAULT 0,
+    travel_years        INT NOT NULL DEFAULT 1,
+    start_year          INT NOT NULL DEFAULT 1,
+    arrive_year         INT NOT NULL DEFAULT 1,
+    status              VARCHAR(20) NOT NULL DEFAULT 'traveling',
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
