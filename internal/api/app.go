@@ -60,10 +60,22 @@ func NewApp(pool *pgxpool.Pool, rdb *redis.Client, engine *game.Engine, jwtSecre
 	api.Get("/techniques", h.TechniqueList)
 	api.Post("/technique/equip", h.AuthMiddleware, h.EquipTechnique)
 
-	// ── Secret realms ──
+	// ── Secret realms (legacy type) ──
 	api.Get("/secret-realms", h.SecretRealmList)
 	api.Post("/secret-realm/explore", h.AuthMiddleware, h.ExploreSecretRealm)
 	api.Get("/secret-realm/collect", h.AuthMiddleware, h.CollectExploration)
+
+	// ── 洞府系统（美国景点，可占领）──
+	api.Get("/caves", h.CaveList)
+	api.Get("/caves/:id", h.CaveDetail)
+	api.Post("/caves/:id/claim", h.AuthMiddleware, h.CaveClaim)
+	api.Post("/caves/:id/challenge", h.AuthMiddleware, h.CaveChallenge)
+
+	// ── 城市秘境系统（30个美国城市）──
+	api.Get("/city-realms", h.OptionalAuth, h.CityRealmList)
+	api.Post("/city-realms/:id/enter", h.AuthMiddleware, h.CityRealmEnter)
+	api.Get("/city-realms/:id/status", h.AuthMiddleware, h.CityRealmStatus)
+	api.Post("/city-realms/:id/exit", h.AuthMiddleware, h.CityRealmExit)
 
 	// ── Alchemy ──
 	api.Post("/alchemy/start", h.AuthMiddleware, h.StartAlchemy)

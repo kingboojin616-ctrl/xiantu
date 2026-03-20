@@ -146,6 +146,26 @@ CREATE TABLE IF NOT EXISTS hall_of_fame (
     recorded_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- ========== 洞府占领记录（美国景点） ==========
+CREATE TABLE IF NOT EXISTS cave_occupations (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    cave_id     VARCHAR(50) UNIQUE NOT NULL,  -- e.g. "yellowstone"
+    player_id   UUID NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+    occupied_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_reward_year INT NOT NULL DEFAULT 0
+);
+
+-- ========== 城市秘境探索记录 ==========
+CREATE TABLE IF NOT EXISTS city_realm_explorations (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    player_id       UUID NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+    city_id         VARCHAR(50) NOT NULL,  -- e.g. "new_york"
+    started_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    finish_at       TIMESTAMPTZ NOT NULL,
+    collected       BOOLEAN NOT NULL DEFAULT FALSE,
+    narrative_seed  JSONB  -- event seed generated on enter
+);
+
 -- ========== 索引 ==========
 CREATE INDEX IF NOT EXISTS idx_device_login_agent ON device_login_requests(agent_id);
 CREATE INDEX IF NOT EXISTS idx_device_login_status ON device_login_requests(status);
@@ -155,6 +175,9 @@ CREATE INDEX IF NOT EXISTS idx_player_alchemy_player ON player_alchemy(player_id
 CREATE INDEX IF NOT EXISTS idx_spirit_materials_player ON spirit_materials(player_id);
 CREATE INDEX IF NOT EXISTS idx_trib_contributions_event ON tribulation_contributions(event_id);
 CREATE INDEX IF NOT EXISTS idx_trib_events_status ON tribulation_events(status);
+CREATE INDEX IF NOT EXISTS idx_cave_occupations_cave ON cave_occupations(cave_id);
+CREATE INDEX IF NOT EXISTS idx_cave_occupations_player ON cave_occupations(player_id);
+CREATE INDEX IF NOT EXISTS idx_city_realm_player ON city_realm_explorations(player_id);
 `
 
 // migrationSQL handles upgrading existing databases

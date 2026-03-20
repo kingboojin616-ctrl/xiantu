@@ -126,7 +126,12 @@ func (e *Engine) processYear(ctx context.Context) error {
 		log.Printf("tribulation timeout check error: %v", err)
 	}
 
-	// 6. Publish year event to Redis
+	// 6. Process cave yearly rewards
+	if err := e.processCaveRewards(ctx, currentYear); err != nil {
+		log.Printf("cave rewards error: %v", err)
+	}
+
+	// 7. Publish year event to Redis
 	e.rdb.Publish(ctx, "game:year", fmt.Sprintf("%d", currentYear))
 
 	return nil
@@ -347,6 +352,83 @@ func (e *Engine) CheckTribulationConditions(ctx context.Context, eventID string)
 	}
 
 	return false, nil
+}
+
+// processCaveRewards distributes yearly rewards to cave occupants
+func (e *Engine) processCaveRewards(ctx context.Context, currentYear int) error {
+	rows, err := e.db.Query(ctx,
+		`SELECT cave_id, player_id, last_reward_year FROM cave_occupations WHERE last_reward_year < $1`,
+		currentYear,
+	)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	type caveRewardJob struct {
+		CaveID         string
+		PlayerID       string
+		LastRewardYear int
+	}
+	var jobs []caveRewardJob
+	for rows.Next() {
+		var j caveRewardJob
+		rows.Scan(&j.CaveID, &j.PlayerID, &j.LastRewardYear)
+		jobs = append(jobs, j)
+	}
+	rows.Close()
+
+	for _, j := range jobs {
+		cave, ok := LocationCaves[j.CaveID]
+		if !ok {
+			continue
+		}
+		yearsEarned := currentYear - j.LastRewardYear
+		_, stonePct, matPct, _ := CaveYearlyReward(cave)
+
+		if stonePct > 0 {
+			totalStone := int64(stonePct) * int64(yearsEarned)
+			_, _ = e.db.Exec(ctx,
+				`UPDATE players SET spirit_stone=spirit_stone+$1, updated_at=NOW() WHERE id=$2`,
+				totalStone, j.PlayerID,
+			)
+		}
+		if matPct > 0 {
+			bonusMats := int64(matPct/10) * int64(yearsEarned)
+			if bonusMats > 0 {
+				_, _ = e.db.Exec(ctx,
+					`INSERT INTO spirit_materials (player_id, element, quantity) VALUES ($1,$2,$3)
+					 ON CONFLICT (player_id, element) DO UPDATE SET quantity=spirit_materials.quantity+$3`,
+					j.PlayerID, cave.Element, bonusMats,
+				)
+			}
+		}
+		cultivPct, _, _, _ := CaveYearlyReward(cave)
+		if cultivPct > 0 {
+			bonusXP := int64(BaseXPPerYear) * int64(cultivPct) / 100 * int64(yearsEarned)
+			_, _ = e.db.Exec(ctx,
+				`UPDATE players SET cultivation_xp=cultivation_xp+$1, updated_at=NOW() WHERE id=$2`,
+				bonusXP, j.PlayerID,
+			)
+		}
+		_, _ = e.db.Exec(ctx,
+			`UPDATE cave_occupations SET last_reward_year=$1 WHERE cave_id=$2`,
+			currentYear, j.CaveID,
+		)
+	}
+	return nil
+}
+
+// PublishCaveEvent publishes a cave event to Redis
+func (e *Engine) PublishCaveEvent(ctx context.Context, eventType, caveID, playerID string) {
+	payload := fmt.Sprintf(`{"caveId":"%s","playerId":"%s"}`, caveID, playerID)
+	e.rdb.Publish(ctx, "game:cave:"+eventType, payload)
+}
+
+// PublishRealmCompleteEvent publishes a city realm complete event to Redis
+func (e *Engine) PublishRealmCompleteEvent(ctx context.Context, cityID, playerID string) {
+	payload := fmt.Sprintf(`{"cityId":"%s","playerId":"%s"}`, cityID, playerID)
+	e.rdb.Publish(ctx, "game:realm_complete", payload)
 }
 
 func (e *Engine) recordHallOfFame(ctx context.Context, eventID string, year int, element string) error {

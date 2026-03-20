@@ -45,6 +45,19 @@ func (h *Handler) AuthMiddleware(c *fiber.Ctx) error {
 	return c.Next()
 }
 
+// OptionalAuth tries to parse JWT but doesn't fail if missing
+func (h *Handler) OptionalAuth(c *fiber.Ctx) error {
+	tokenStr := c.Get("Authorization")
+	tokenStr = strings.TrimPrefix(tokenStr, "Bearer ")
+	if tokenStr != "" {
+		if claims, err := auth.ParseToken(tokenStr, h.jwtSecret); err == nil {
+			c.Locals("playerID", claims.PlayerID)
+			c.Locals("agentID", claims.AgentID)
+		}
+	}
+	return c.Next()
+}
+
 // ========== Auth ==========
 
 // POST /api/register

@@ -65,7 +65,10 @@ func NewHub(db *pgxpool.Pool, rdb *redis.Client, engine *game.Engine, jwtSecret 
 
 func (h *Hub) Run() {
 	ctx := context.Background()
-	sub := h.rdb.Subscribe(ctx, "game:year", "game:tribulation", "game:tribulation_success", "game:reset")
+	sub := h.rdb.Subscribe(ctx,
+		"game:year", "game:tribulation", "game:tribulation_success", "game:reset",
+		"game:cave:cave_claimed", "game:cave:cave_challenged", "game:realm_complete",
+	)
 	ch := sub.Channel()
 
 	for msg := range ch {
@@ -84,6 +87,15 @@ func (h *Hub) Run() {
 			case "game:reset":
 				c.write(Response{Seq: 0, Type: "event.world_reset", Ok: true,
 					Data: map[string]interface{}{"reason": "天劫失败，全服重置"}})
+			case "game:cave:cave_claimed":
+				c.write(Response{Seq: 0, Type: "event.cave_claimed", Ok: true,
+					Data: map[string]interface{}{"info": msg.Payload}})
+			case "game:cave:cave_challenged":
+				c.write(Response{Seq: 0, Type: "event.cave_challenged", Ok: true,
+					Data: map[string]interface{}{"info": msg.Payload}})
+			case "game:realm_complete":
+				c.write(Response{Seq: 0, Type: "event.realm_complete", Ok: true,
+					Data: map[string]interface{}{"info": msg.Payload}})
 			}
 		}
 		h.mu.RUnlock()
@@ -173,6 +185,26 @@ func (h *Hub) dispatch(c *Client, msg Message) {
 
 	case "cmd.plan.patrol":
 		h.requireAuth(c, msg, func() { h.handlePlanPatrol(ctx, c, msg) })
+
+	// ── Cave system ──
+	case "query.caves":
+		h.handleQueryCaves(ctx, c, msg)
+
+	case "cmd.cave.claim":
+		h.requireAuth(c, msg, func() { h.handleCaveClaim(ctx, c, msg) })
+
+	case "cmd.cave.challenge":
+		h.requireAuth(c, msg, func() { h.handleCaveChallenge(ctx, c, msg) })
+
+	// ── City realm system ──
+	case "query.secret_realms":
+		h.handleQueryCityRealms(ctx, c, msg)
+
+	case "cmd.realm.enter":
+		h.requireAuth(c, msg, func() { h.handleCityRealmEnter(ctx, c, msg) })
+
+	case "cmd.realm.exit":
+		h.requireAuth(c, msg, func() { h.handleCityRealmExit(ctx, c, msg) })
 
 	default:
 		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false,
@@ -959,4 +991,331 @@ func (h *Hub) handlePlanPatrol(ctx context.Context, c *Client, msg Message) {
 			"wakeTriggers":      []string{"修为足够突破", "天劫开启", "秘境可结算", "炼丹完成"},
 		},
 	})
+}
+
+// ── Cave system ──
+
+func (h *Hub) handleQueryCaves(ctx context.Context, c *Client, msg Message) {
+	rows, err := h.db.Query(ctx,
+		`SELECT co.cave_id, p.username, p.realm, p.realm_level, co.occupied_at
+		 FROM cave_occupations co
+		 JOIN players p ON p.id = co.player_id`,
+	)
+	occupations := map[string]map[string]interface{}{}
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var caveID, username, realm string
+			var realmLevel int
+			var occupiedAt time.Time
+			rows.Scan(&caveID, &username, &realm, &realmLevel, &occupiedAt)
+			occupations[caveID] = map[string]interface{}{
+				"username":   username,
+				"realmName":  game.RealmDisplayName(realm, realmLevel),
+				"occupiedAt": occupiedAt,
+			}
+		}
+		rows.Close()
+	}
+
+	var caves []map[string]interface{}
+	for _, id := range game.CaveOrder {
+		cave := game.LocationCaves[id]
+		entry := map[string]interface{}{
+			"id":         cave.ID,
+			"name":       cave.Name,
+			"nameEn":     cave.NameEn,
+			"element":    cave.Element,
+			"elementCn":  game.ElementChinese(cave.Element),
+			"bonusType":  string(cave.BonusType),
+			"bonusValue": cave.BonusValue,
+			"occupied":   false,
+			"occupant":   nil,
+		}
+		if occ, ok := occupations[id]; ok {
+			entry["occupied"] = true
+			entry["occupant"] = occ
+		}
+		caves = append(caves, entry)
+	}
+	c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: true,
+		Data: map[string]interface{}{"caves": caves, "total": len(caves)}})
+}
+
+func (h *Hub) handleCaveClaim(ctx context.Context, c *Client, msg Message) {
+	var data struct {
+		CaveID string `json:"caveId"`
+	}
+	if err := json.Unmarshal(msg.Data, &data); err != nil || data.CaveID == "" {
+		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false, Error: "caveId required"})
+		return
+	}
+
+	cave, ok := game.LocationCaves[data.CaveID]
+	if !ok {
+		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false, Error: "unknown cave"})
+		return
+	}
+
+	var existingPlayerID string
+	err := h.db.QueryRow(ctx, `SELECT player_id FROM cave_occupations WHERE cave_id=$1`, data.CaveID).Scan(&existingPlayerID)
+	if err == nil {
+		if existingPlayerID == c.playerID {
+			c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false, Error: "你已占领此洞府"})
+			return
+		}
+		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false, Error: "此洞府已被占领，请使用 cmd.cave.challenge"})
+		return
+	}
+
+	var currentYear int
+	h.db.QueryRow(ctx, `SELECT current_year FROM world_state WHERE id=1`).Scan(&currentYear)
+
+	_, dbErr := h.db.Exec(ctx,
+		`INSERT INTO cave_occupations (cave_id, player_id, last_reward_year) VALUES ($1,$2,$3)
+		 ON CONFLICT (cave_id) DO UPDATE SET player_id=$2, occupied_at=NOW(), last_reward_year=$3`,
+		data.CaveID, c.playerID, currentYear,
+	)
+	if dbErr != nil {
+		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false, Error: "db error"})
+		return
+	}
+
+	h.engine.PublishCaveEvent(ctx, "cave_claimed", data.CaveID, c.playerID)
+	c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: true,
+		Data: map[string]interface{}{
+			"caveId":    data.CaveID,
+			"caveName":  cave.Name,
+			"element":   game.ElementChinese(cave.Element),
+			"bonusType": string(cave.BonusType),
+			"bonusValue": cave.BonusValue,
+			"message":   fmt.Sprintf("成功占领【%s】！", cave.Name),
+		}})
+}
+
+func (h *Hub) handleCaveChallenge(ctx context.Context, c *Client, msg Message) {
+	var data struct {
+		CaveID string `json:"caveId"`
+	}
+	if err := json.Unmarshal(msg.Data, &data); err != nil || data.CaveID == "" {
+		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false, Error: "caveId required"})
+		return
+	}
+
+	cave, ok := game.LocationCaves[data.CaveID]
+	if !ok {
+		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false, Error: "unknown cave"})
+		return
+	}
+
+	var defenderID string
+	err := h.db.QueryRow(ctx, `SELECT player_id FROM cave_occupations WHERE cave_id=$1`, data.CaveID).Scan(&defenderID)
+	if err != nil {
+		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false, Error: "洞府无人占领，请用 cmd.cave.claim"})
+		return
+	}
+	if defenderID == c.playerID {
+		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false, Error: "无法挑战自己"})
+		return
+	}
+
+	var challRealm, challName string
+	var challLevel int
+	h.db.QueryRow(ctx, `SELECT realm, realm_level, username FROM players WHERE id=$1`, c.playerID).Scan(&challRealm, &challLevel, &challName)
+	var defRealm, defName string
+	var defLevel int
+	h.db.QueryRow(ctx, `SELECT realm, realm_level, username FROM players WHERE id=$1`, defenderID).Scan(&defRealm, &defLevel, &defName)
+
+	challOrder := game.RealmTiers[challRealm].Order
+	defOrder := game.RealmTiers[defRealm].Order
+
+	var challengerWins bool
+	if challOrder != defOrder {
+		challengerWins = challOrder > defOrder
+	} else if challLevel != defLevel {
+		challengerWins = challLevel > defLevel
+	} else {
+		challengerWins = game.RandBool()
+	}
+
+	var currentYear int
+	h.db.QueryRow(ctx, `SELECT current_year FROM world_state WHERE id=1`).Scan(&currentYear)
+
+	if challengerWins {
+		_, _ = h.db.Exec(ctx,
+			`UPDATE cave_occupations SET player_id=$1, occupied_at=NOW(), last_reward_year=$2 WHERE cave_id=$3`,
+			c.playerID, currentYear, data.CaveID,
+		)
+		h.engine.PublishCaveEvent(ctx, "cave_challenged", data.CaveID, c.playerID)
+	}
+
+	c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: true,
+		Data: map[string]interface{}{
+			"challengerWins": challengerWins,
+			"caveId":         data.CaveID,
+			"caveName":       cave.Name,
+			"challenger":     challName,
+			"defender":       defName,
+			"message": func() string {
+				if challengerWins {
+					return fmt.Sprintf("挑战成功！【%s】已归你所有！", cave.Name)
+				}
+				return fmt.Sprintf("挑战失败！【%s】守住了！", cave.Name)
+			}(),
+		}})
+}
+
+// ── City realm system ──
+
+func (h *Hub) handleQueryCityRealms(ctx context.Context, c *Client, msg Message) {
+	var realms []map[string]interface{}
+	for _, id := range game.CityRealmOrder {
+		cr := game.CityRealms[id]
+		elems := make([]string, len(cr.Elements))
+		for i, e := range cr.Elements {
+			elems[i] = game.ElementChinese(e)
+		}
+		realms = append(realms, map[string]interface{}{
+			"id":          cr.ID,
+			"name":        cr.Name,
+			"nameEn":      cr.NameEn,
+			"elementsCn":  elems,
+			"durationSec": cr.DurationSec,
+			"soulCost":    cr.SoulCost,
+			"baseXP":      cr.BaseXP,
+			"baseStone":   cr.BaseSpiritStone,
+		})
+	}
+	c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: true,
+		Data: map[string]interface{}{"cityRealms": realms, "total": len(realms)}})
+}
+
+func (h *Hub) handleCityRealmEnter(ctx context.Context, c *Client, msg Message) {
+	var data struct {
+		CityID string `json:"cityId"`
+	}
+	if err := json.Unmarshal(msg.Data, &data); err != nil || data.CityID == "" {
+		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false, Error: "cityId required"})
+		return
+	}
+
+	cr, ok := game.CityRealms[data.CityID]
+	if !ok {
+		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false, Error: "unknown city realm"})
+		return
+	}
+
+	var activeCount int
+	h.db.QueryRow(ctx, `SELECT COUNT(*) FROM city_realm_explorations WHERE player_id=$1 AND collected=false`, c.playerID).Scan(&activeCount)
+	if activeCount > 0 {
+		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false, Error: "已有进行中的城市秘境探索"})
+		return
+	}
+
+	var soulSense int64
+	h.db.QueryRow(ctx, `SELECT soul_sense FROM players WHERE id=$1`, c.playerID).Scan(&soulSense)
+	if soulSense < cr.SoulCost {
+		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false,
+			Error: fmt.Sprintf("神识值不足，需要%d，当前%d", cr.SoulCost, soulSense)})
+		return
+	}
+
+	_, _ = h.db.Exec(ctx, `UPDATE players SET soul_sense=soul_sense-$1 WHERE id=$2`, cr.SoulCost, c.playerID)
+
+	_, narrativeSeed := game.RollCityRealmRewards(cr)
+	seedJSON, _ := json.Marshal(narrativeSeed)
+	finishAt := time.Now().Add(time.Duration(cr.DurationSec) * time.Second)
+
+	var exploID string
+	h.db.QueryRow(ctx,
+		`INSERT INTO city_realm_explorations (player_id, city_id, finish_at, narrative_seed) VALUES ($1,$2,$3,$4) RETURNING id`,
+		c.playerID, data.CityID, finishAt, seedJSON,
+	).Scan(&exploID)
+
+	hint := ""
+	if h, ok := narrativeSeed["narrative_hint"].(string); ok {
+		hint = h
+	}
+
+	c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: true,
+		Data: map[string]interface{}{
+			"explorationId": exploID,
+			"cityId":        data.CityID,
+			"cityName":      cr.Name,
+			"finishAt":      finishAt,
+			"durationSec":   cr.DurationSec,
+			"narrativeSeed": narrativeSeed,
+			"message":       fmt.Sprintf("踏入【%s】！神识消耗%d，%d秒后可结算。%s", cr.Name, cr.SoulCost, cr.DurationSec, hint),
+		}})
+}
+
+func (h *Hub) handleCityRealmExit(ctx context.Context, c *Client, msg Message) {
+	var data struct {
+		CityID string `json:"cityId"`
+	}
+	if err := json.Unmarshal(msg.Data, &data); err != nil || data.CityID == "" {
+		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false, Error: "cityId required"})
+		return
+	}
+
+	cr, ok := game.CityRealms[data.CityID]
+	if !ok {
+		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false, Error: "unknown city realm"})
+		return
+	}
+
+	var exploID string
+	var finishAt time.Time
+	err := h.db.QueryRow(ctx,
+		`SELECT id, finish_at FROM city_realm_explorations WHERE player_id=$1 AND city_id=$2 AND collected=false ORDER BY started_at DESC LIMIT 1`,
+		c.playerID, data.CityID,
+	).Scan(&exploID, &finishAt)
+	if err != nil {
+		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false, Error: "没有进行中的探索"})
+		return
+	}
+
+	rewards, narrativeSeed := game.RollCityRealmRewards(cr)
+	isEarly := time.Now().Before(finishAt)
+	if isEarly {
+		elapsed := time.Since(finishAt.Add(-time.Duration(cr.DurationSec) * time.Second))
+		ratio := float64(elapsed.Seconds()) / float64(cr.DurationSec)
+		if ratio < 0 { ratio = 0 }
+		if ratio > 1 { ratio = 1 }
+		for k, v := range rewards {
+			rewards[k] = int64(float64(v) * ratio)
+		}
+	}
+
+	if xp := rewards["cultivation_xp"]; xp > 0 {
+		_, _ = h.db.Exec(ctx, `UPDATE players SET cultivation_xp=cultivation_xp+$1 WHERE id=$2`, xp, c.playerID)
+	}
+	if stone := rewards["spirit_stone"]; stone > 0 {
+		_, _ = h.db.Exec(ctx, `UPDATE players SET spirit_stone=spirit_stone+$1 WHERE id=$2`, stone, c.playerID)
+	}
+	for _, elem := range game.Elements {
+		if qty := rewards["material_"+elem]; qty > 0 {
+			_, _ = h.db.Exec(ctx,
+				`INSERT INTO spirit_materials (player_id, element, quantity) VALUES ($1,$2,$3) ON CONFLICT (player_id,element) DO UPDATE SET quantity=spirit_materials.quantity+$3`,
+				c.playerID, elem, qty,
+			)
+		}
+	}
+	_, _ = h.db.Exec(ctx, `UPDATE city_realm_explorations SET collected=true WHERE id=$1`, exploID)
+	h.engine.PublishRealmCompleteEvent(ctx, data.CityID, c.playerID)
+
+	hint := ""
+	if h, ok := narrativeSeed["narrative_hint"].(string); ok {
+		hint = h
+	}
+	c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: true,
+		Data: map[string]interface{}{
+			"cityId":        data.CityID,
+			"cityName":      cr.Name,
+			"earlyExit":     isEarly,
+			"cultivationXp": rewards["cultivation_xp"],
+			"spiritStone":   rewards["spirit_stone"],
+			"narrativeSeed": narrativeSeed,
+			"message":       fmt.Sprintf("【%s】秘境结算！修为+%d，灵石+%d。%s", cr.Name, rewards["cultivation_xp"], rewards["spirit_stone"], hint),
+		}})
 }
