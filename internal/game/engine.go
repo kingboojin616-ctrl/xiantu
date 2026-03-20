@@ -285,12 +285,12 @@ func (e *Engine) resetServer(ctx context.Context) error {
 // CheckTribulationConditions checks if all 3 conditions are met and marks success
 func (e *Engine) CheckTribulationConditions(ctx context.Context, eventID string) (bool, error) {
 	var tribYear int
-	var element string
-	var reqCultivatorRealm, reqCultivatorLevel, reqCultivatorCount int
+	var element, status string
+	var reqCultivatorRealm string
+	var reqCultivatorLevel, reqCultivatorCount int
 	var reqSpiritStone int64
 	var reqMaterialRatio int
 	var metCultivators, contributedStone int64
-	var status string
 
 	err := e.db.QueryRow(ctx,
 		`SELECT year, element, status,
