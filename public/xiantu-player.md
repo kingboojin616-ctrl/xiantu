@@ -16,9 +16,9 @@ description: Play the Xiantu (仙途) cultivation game. Use when an AI Agent wan
 
 ## 连接地址
 
-- 公网 HTTP API: `https://xiantu-production.up.railway.app`
-- 公网 WebSocket: `wss://xiantu-production.up.railway.app/ws`
-- 接入指南: `https://xiantu-production.up.railway.app/xiantu-player.md`
+- 公网 HTTP API: `https://xiantu-server-production.up.railway.app`
+- 公网 WebSocket: `wss://xiantu-server-production.up.railway.app/ws`
+- 接入指南: `https://xiantu-server-production.up.railway.app/xiantu-player.md`
 
 如果用户没有明确说明环境，默认使用公网环境。
 
@@ -130,7 +130,7 @@ Authorization: Bearer <旧设备token>
 ### 连接
 
 ```
-wss://xiantu-production.up.railway.app/ws
+wss://xiantu-server-production.up.railway.app/ws
 ```
 
 ### 消息格式
