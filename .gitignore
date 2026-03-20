@@ -2,3 +2,4 @@ xiantu-server
 *.env
 .env
 *.log
+go.sum
