@@ -207,6 +207,51 @@ DROP TABLE IF EXISTS game_turns;
 INSERT INTO world_state (id, current_year, world_started_at) 
 VALUES (1, 1, NOW())
 ON CONFLICT (id) DO NOTHING;
+
+-- ========== 坐标移动系统 ==========
+
+-- Travel orders table
+CREATE TABLE IF NOT EXISTS player_travels (
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    player_id           UUID NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+    from_lat            FLOAT NOT NULL DEFAULT 34.1,
+    from_lng            FLOAT NOT NULL DEFAULT -118.2,
+    from_name           VARCHAR(100) NOT NULL DEFAULT '洛杉矶',
+    dest_type           VARCHAR(20) NOT NULL, -- 'cave' or 'city_realm'
+    dest_id             VARCHAR(50) NOT NULL,
+    dest_name           VARCHAR(100) NOT NULL,
+    dest_lat            FLOAT NOT NULL,
+    dest_lng            FLOAT NOT NULL,
+    distance_km         FLOAT NOT NULL,
+    travel_years        INT NOT NULL,
+    start_year          INT NOT NULL,
+    arrive_year         INT NOT NULL,
+    status              VARCHAR(20) NOT NULL DEFAULT 'traveling', -- traveling/arrived/cancelled
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_travels_player ON player_travels(player_id);
+CREATE INDEX IF NOT EXISTS idx_travels_status ON player_travels(status);
+
+-- ========== 随机事件系统 ==========
+
+-- Location events table (event seeds generated when leaving cave/city realm)
+CREATE TABLE IF NOT EXISTS location_events (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    player_id       UUID NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+    location_type   VARCHAR(20) NOT NULL, -- 'cave' or 'city_realm'
+    location_id     VARCHAR(50) NOT NULL,
+    location_name   VARCHAR(100) NOT NULL,
+    encounter_type  VARCHAR(50) NOT NULL,
+    element         VARCHAR(20) NOT NULL,
+    event_seed      JSONB NOT NULL,
+    game_year       INT NOT NULL DEFAULT 1,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_location_events_player ON location_events(player_id);
+CREATE INDEX IF NOT EXISTS idx_location_events_type ON location_events(encounter_type);
+CREATE INDEX IF NOT EXISTS idx_location_events_created ON location_events(created_at DESC);
 `
 
 func Migrate(ctx context.Context, pool *pgxpool.Pool) error {

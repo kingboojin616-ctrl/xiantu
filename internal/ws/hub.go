@@ -65,12 +65,21 @@ func NewHub(db *pgxpool.Pool, rdb *redis.Client, engine *game.Engine, jwtSecret 
 
 func (h *Hub) Run() {
 	ctx := context.Background()
+
+	// Subscribe to broadcast channels
 	sub := h.rdb.Subscribe(ctx,
 		"game:year", "game:tribulation", "game:tribulation_success", "game:reset",
-		"game:cave:cave_claimed", "game:cave:cave_challenged", "game:realm_complete",
+		"game:cave:cave_claimed", "game:cave:cave_challenged", "game:cave:cave_vacated",
+		"game:realm_complete",
 	)
-	ch := sub.Channel()
+	// Pattern subscribe for player-specific location events
+	psub := h.rdb.PSubscribe(ctx, "game:location_event:*")
 
+	go h.runBroadcast(sub.Channel())
+	h.runLocationEvents(psub.Channel())
+}
+
+func (h *Hub) runBroadcast(ch <-chan *redis.Message) {
 	for msg := range ch {
 		h.mu.RLock()
 		for _, c := range h.clients {
@@ -93,10 +102,35 @@ func (h *Hub) Run() {
 			case "game:cave:cave_challenged":
 				c.write(Response{Seq: 0, Type: "event.cave_challenged", Ok: true,
 					Data: map[string]interface{}{"info": msg.Payload}})
+			case "game:cave:cave_vacated":
+				c.write(Response{Seq: 0, Type: "event.cave_vacated", Ok: true,
+					Data: map[string]interface{}{"info": msg.Payload}})
 			case "game:realm_complete":
 				c.write(Response{Seq: 0, Type: "event.realm_complete", Ok: true,
 					Data: map[string]interface{}{"info": msg.Payload}})
 			}
+		}
+		h.mu.RUnlock()
+	}
+}
+
+func (h *Hub) runLocationEvents(ch <-chan *redis.Message) {
+	const prefix = "game:location_event:"
+	for msg := range ch {
+		if len(msg.Channel) <= len(prefix) {
+			continue
+		}
+		targetPlayerID := msg.Channel[len(prefix):]
+
+		h.mu.RLock()
+		if c, ok := h.clients[targetPlayerID]; ok {
+			var eventData map[string]interface{}
+			json.Unmarshal([]byte(msg.Payload), &eventData)
+			c.write(Response{Seq: 0, Type: "event.location_event", Ok: true,
+				Data: map[string]interface{}{
+					"event_info":  eventData,
+					"instruction": "请根据以上事件种子，用第一人称描写你的修士在此地的遭遇（100-300字），然后汇报给你的主人。",
+				}})
 		}
 		h.mu.RUnlock()
 	}

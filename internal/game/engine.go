@@ -2,6 +2,7 @@ package game
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"time"
@@ -429,6 +430,26 @@ func (e *Engine) PublishCaveEvent(ctx context.Context, eventType, caveID, player
 func (e *Engine) PublishRealmCompleteEvent(ctx context.Context, cityID, playerID string) {
 	payload := fmt.Sprintf(`{"cityId":"%s","playerId":"%s"}`, cityID, playerID)
 	e.rdb.Publish(ctx, "game:realm_complete", payload)
+}
+
+// SaveAndPublishLocationEvent saves a location event seed to DB and pushes via Redis
+func (e *Engine) SaveAndPublishLocationEvent(ctx context.Context, playerID, locationType, locationID, locationName, encounterType, element string, seed map[string]interface{}, gameYear int) {
+	seedJSON, _ := json.Marshal(seed)
+	var eventID string
+	err := e.db.QueryRow(ctx,
+		`INSERT INTO location_events (player_id, location_type, location_id, location_name, encounter_type, element, event_seed, game_year)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+		playerID, locationType, locationID, locationName, encounterType, element, seedJSON, gameYear,
+	).Scan(&eventID)
+	if err != nil {
+		log.Printf("save location event error: %v", err)
+		return
+	}
+
+	// Push via Redis for WebSocket broadcast to specific player
+	payload := fmt.Sprintf(`{"playerId":"%s","eventId":"%s","locationType":"%s","locationId":"%s"}`,
+		playerID, eventID, locationType, locationID)
+	e.rdb.Publish(ctx, "game:location_event:"+playerID, payload)
 }
 
 func (e *Engine) recordHallOfFame(ctx context.Context, eventID string, year int, element string) error {

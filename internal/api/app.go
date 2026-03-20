@@ -70,12 +70,23 @@ func NewApp(pool *pgxpool.Pool, rdb *redis.Client, engine *game.Engine, jwtSecre
 	api.Get("/caves/:id", h.CaveDetail)
 	api.Post("/caves/:id/claim", h.AuthMiddleware, h.CaveClaim)
 	api.Post("/caves/:id/challenge", h.AuthMiddleware, h.CaveChallenge)
+	api.Post("/caves/:id/leave", h.AuthMiddleware, h.CaveLeave)
 
 	// ── 城市秘境系统（30个美国城市）──
 	api.Get("/city-realms", h.OptionalAuth, h.CityRealmList)
 	api.Post("/city-realms/:id/enter", h.AuthMiddleware, h.CityRealmEnter)
 	api.Get("/city-realms/:id/status", h.AuthMiddleware, h.CityRealmStatus)
 	api.Post("/city-realms/:id/exit", h.AuthMiddleware, h.CityRealmExit)
+
+	// ── 坐标移动系统 ──
+	api.Get("/travel/estimate", h.TravelEstimate)
+	api.Post("/travel/start", h.AuthMiddleware, h.TravelStart)
+	api.Get("/travel/status", h.AuthMiddleware, h.TravelStatus)
+	api.Post("/travel/cancel", h.AuthMiddleware, h.TravelCancel)
+
+	// ── 随机事件系统 ──
+	api.Get("/events/recent", h.EventsRecent)
+	api.Get("/events/my", h.AuthMiddleware, h.EventsMy)
 
 	// ── Alchemy ──
 	api.Post("/alchemy/start", h.AuthMiddleware, h.StartAlchemy)

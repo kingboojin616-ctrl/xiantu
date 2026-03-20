@@ -1,6 +1,8 @@
 package game
 
 import (
+	"fmt"
+	"math"
 	"math/rand"
 	"time"
 )
@@ -585,6 +587,54 @@ func CaveIdleBonus(level int) float64 {
 	return float64(level-1) * 0.05
 }
 
+// ========== 坐标系统（Haversine距离计算） ==========
+
+const (
+	// 基准最远距离：洛杉矶→纽约 约4500km
+	MaxDistanceKm = 4500.0
+	// 移动速度基准耗时（游戏年）
+	TravelYearsQiRefining         = 30
+	TravelYearsFoundation         = 15
+	TravelYearsCoreFormation      = 8
+	TravelYearsNascentSoul        = 3
+	TravelYearsDeityTransformation = 1
+)
+
+// HaversineKm calculates distance in kilometers between two lat/lng points
+func HaversineKm(lat1, lng1, lat2, lng2 float64) float64 {
+	const R = 6371.0 // Earth radius in km
+	dLat := (lat2 - lat1) * math.Pi / 180
+	dLng := (lng2 - lng1) * math.Pi / 180
+	a := math.Sin(dLat/2)*math.Sin(dLat/2) +
+		math.Cos(lat1*math.Pi/180)*math.Cos(lat2*math.Pi/180)*
+			math.Sin(dLng/2)*math.Sin(dLng/2)
+	c := 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
+	return R * c
+}
+
+// TravelYears calculates game years needed to travel given distance and realm
+func TravelYears(distKm float64, realm string) int {
+	var baseDays int
+	switch {
+	case realm == "qi_refining":
+		baseDays = TravelYearsQiRefining
+	case realm == "foundation":
+		baseDays = TravelYearsFoundation
+	case realm == "core_formation":
+		baseDays = TravelYearsCoreFormation
+	case realm == "nascent_soul":
+		baseDays = TravelYearsNascentSoul
+	default:
+		// deity_transformation and above
+		baseDays = TravelYearsDeityTransformation
+	}
+	years := int(math.Round(distKm / MaxDistanceKm * float64(baseDays)))
+	if years < 1 {
+		years = 1
+	}
+	return years
+}
+
 // ========== 洞府系统（美国景点，可占领） ==========
 
 // CaveBonusType describes what stat is boosted
@@ -605,6 +655,8 @@ type LocationCave struct {
 	BonusType   CaveBonusType
 	BonusValue  int // percentage or flat value
 	Desc        string
+	Latitude    float64
+	Longitude   float64
 }
 
 var CaveOrder = []string{
@@ -617,36 +669,36 @@ var CaveOrder = []string{
 }
 
 var LocationCaves = map[string]LocationCave{
-	"yellowstone":       {ID: "yellowstone", Name: "黄石仙域", NameEn: "Yellowstone", Element: "fire", BonusType: CaveBonusCultivation, BonusValue: 15, Desc: "火山地热孕育的仙域，修炼速度大幅提升"},
-	"grand_canyon":      {ID: "grand_canyon", Name: "大峡谷秘府", NameEn: "Grand Canyon", Element: "earth", BonusType: CaveBonusSpiritStone, BonusValue: 20, Desc: "亿万年大地之力凝聚，灵石源源不断"},
-	"seventeen_mile":    {ID: "seventeen_mile", Name: "17里云道", NameEn: "17-Mile Drive", Element: "metal", BonusType: CaveBonusCultivation, BonusValue: 10, Desc: "金系灵气弥漫的沿海仙道"},
-	"yosemite":          {ID: "yosemite", Name: "优胜美地洞天", NameEn: "Yosemite", Element: "wood", BonusType: CaveBonusCultivation, BonusValue: 12, Desc: "参天古木庇护，木灵之气充沛"},
-	"arches":            {ID: "arches", Name: "拱门灵穴", NameEn: "Arches NP", Element: "earth", BonusType: CaveBonusSpiritStone, BonusValue: 15, Desc: "天然拱门蕴含土系灵气，聚石之地"},
-	"death_valley":      {ID: "death_valley", Name: "死亡谷炼炉", NameEn: "Death Valley", Element: "fire", BonusType: CaveBonusMaterial, BonusValue: 25, Desc: "极端炎热锻造天材，天材地宝产出极丰"},
-	"great_smoky":       {ID: "great_smoky", Name: "大烟山隐府", NameEn: "Great Smoky Mountains", Element: "wood", BonusType: CaveBonusCultivation, BonusValue: 10, Desc: "云雾缭绕古山，木灵之气滋养"},
-	"glacier":           {ID: "glacier", Name: "冰川仙境", NameEn: "Glacier NP", Element: "water", BonusType: CaveBonusCultivation, BonusValue: 12, Desc: "千年冰川蕴含水系仙机"},
-	"hawaii_volcanoes":  {ID: "hawaii_volcanoes", Name: "夏威夷火山道场", NameEn: "Hawaii Volcanoes", Element: "fire", BonusType: CaveBonusBreakthrough, BonusValue: 5, Desc: "活火山之力助力境界突破"},
-	"niagara":           {ID: "niagara", Name: "尼亚加拉瀑布洞", NameEn: "Niagara Falls", Element: "water", BonusType: CaveBonusSpiritStone, BonusValue: 18, Desc: "磅礴瀑布之下，水灵聚石"},
-	"zion":              {ID: "zion", Name: "锡安峡谷", NameEn: "Zion NP", Element: "earth", BonusType: CaveBonusCultivation, BonusValue: 10, Desc: "红岩峡谷土系灵气浓郁"},
-	"bryce_canyon":      {ID: "bryce_canyon", Name: "布莱斯峡谷", NameEn: "Bryce Canyon", Element: "earth", BonusType: CaveBonusMaterial, BonusValue: 20, Desc: "奇特地貌孕育稀有天材地宝"},
-	"olympic":           {ID: "olympic", Name: "奥林匹克云峰", NameEn: "Olympic NP", Element: "wood", BonusType: CaveBonusCultivation, BonusValue: 8, Desc: "雨林生态木灵丰沛"},
-	"acadia":            {ID: "acadia", Name: "阿卡迪亚海崖", NameEn: "Acadia NP", Element: "water", BonusType: CaveBonusSpiritStone, BonusValue: 15, Desc: "海崖之上水灵汇聚成石"},
-	"sequoia":           {ID: "sequoia", Name: "红杉仙木林", NameEn: "Sequoia NP", Element: "wood", BonusType: CaveBonusCultivation, BonusValue: 15, Desc: "万年红杉木灵之气直冲云霄"},
-	"joshua_tree":       {ID: "joshua_tree", Name: "约书亚树荒原", NameEn: "Joshua Tree", Element: "metal", BonusType: CaveBonusMaterial, BonusValue: 15, Desc: "金系荒漠蕴藏丰富矿脉天材"},
-	"carlsbad":          {ID: "carlsbad", Name: "卡尔斯巴德地窟", NameEn: "Carlsbad Caverns", Element: "earth", BonusType: CaveBonusCultivation, BonusValue: 8, Desc: "地下洞窟土系灵气沉积"},
-	"white_sands":       {ID: "white_sands", Name: "白沙幻境", NameEn: "White Sands", Element: "metal", BonusType: CaveBonusCultivation, BonusValue: 10, Desc: "纯白沙漠金系灵气奇特"},
-	"painted_desert":    {ID: "painted_desert", Name: "彩绘沙漠", NameEn: "Painted Desert", Element: "fire", BonusType: CaveBonusMaterial, BonusValue: 18, Desc: "五彩岩层火系天材丰盛"},
-	"craters_moon":      {ID: "craters_moon", Name: "月亮火山坑", NameEn: "Craters of the Moon", Element: "fire", BonusType: CaveBonusCultivation, BonusValue: 12, Desc: "熔岩地貌火系灵气异常活跃"},
-	"great_sand_dunes":  {ID: "great_sand_dunes", Name: "大沙丘仙台", NameEn: "Great Sand Dunes", Element: "earth", BonusType: CaveBonusCultivation, BonusValue: 8, Desc: "大陆高处土系灵气聚集"},
-	"saguaro":           {ID: "saguaro", Name: "仙人掌森林", NameEn: "Saguaro NP", Element: "wood", BonusType: CaveBonusMaterial, BonusValue: 15, Desc: "沙漠木系奇植孕育天材"},
-	"canyonlands":       {ID: "canyonlands", Name: "峡谷地迷宫", NameEn: "Canyonlands", Element: "earth", BonusType: CaveBonusSpiritStone, BonusValue: 12, Desc: "峡谷迷宫藏匿灵石脉络"},
-	"mt_rainier":        {ID: "mt_rainier", Name: "雷尼尔雪峰", NameEn: "Mt. Rainier", Element: "water", BonusType: CaveBonusCultivation, BonusValue: 10, Desc: "冰雪覆盖高峰水系灵气浓厚"},
-	"mt_st_helens":      {ID: "mt_st_helens", Name: "圣海伦火山", NameEn: "Mt. St. Helens", Element: "fire", BonusType: CaveBonusMaterial, BonusValue: 20, Desc: "活火山爆发遗迹火系天材极丰"},
-	"everglades":        {ID: "everglades", Name: "大沼泽秘地", NameEn: "Everglades", Element: "water", BonusType: CaveBonusCultivation, BonusValue: 8, Desc: "热带湿地水系灵气滋润"},
-	"mammoth_cave":      {ID: "mammoth_cave", Name: "猛犸洞天", NameEn: "Mammoth Cave", Element: "earth", BonusType: CaveBonusSpiritStone, BonusValue: 10, Desc: "世界最长洞穴系统土系灵石遍布"},
-	"cape_cod":          {ID: "cape_cod", Name: "科德角海府", NameEn: "Cape Cod", Element: "water", BonusType: CaveBonusSpiritStone, BonusValue: 15, Desc: "海湾水系灵力汇聚成石"},
-	"big_sur":           {ID: "big_sur", Name: "大苏尔仙崖", NameEn: "Big Sur", Element: "metal", BonusType: CaveBonusCultivation, BonusValue: 12, Desc: "绝壁金系灵气磅礴"},
-	"badlands":          {ID: "badlands", Name: "蒙大拿草原", NameEn: "Badlands", Element: "metal", BonusType: CaveBonusMaterial, BonusValue: 12, Desc: "荒凉大地金系矿脉隐藏其中"},
+	"yellowstone":       {ID: "yellowstone", Name: "黄石仙域", NameEn: "Yellowstone", Element: "fire", BonusType: CaveBonusCultivation, BonusValue: 15, Desc: "火山地热孕育的仙域，修炼速度大幅提升", Latitude: 44.4, Longitude: -110.6},
+	"grand_canyon":      {ID: "grand_canyon", Name: "大峡谷秘府", NameEn: "Grand Canyon", Element: "earth", BonusType: CaveBonusSpiritStone, BonusValue: 20, Desc: "亿万年大地之力凝聚，灵石源源不断", Latitude: 36.1, Longitude: -112.1},
+	"seventeen_mile":    {ID: "seventeen_mile", Name: "17里云道", NameEn: "17-Mile Drive", Element: "metal", BonusType: CaveBonusCultivation, BonusValue: 10, Desc: "金系灵气弥漫的沿海仙道", Latitude: 36.6, Longitude: -121.9},
+	"yosemite":          {ID: "yosemite", Name: "优胜美地洞天", NameEn: "Yosemite", Element: "wood", BonusType: CaveBonusCultivation, BonusValue: 12, Desc: "参天古木庇护，木灵之气充沛", Latitude: 37.8, Longitude: -119.5},
+	"arches":            {ID: "arches", Name: "拱门灵穴", NameEn: "Arches NP", Element: "earth", BonusType: CaveBonusSpiritStone, BonusValue: 15, Desc: "天然拱门蕴含土系灵气，聚石之地", Latitude: 38.7, Longitude: -109.6},
+	"death_valley":      {ID: "death_valley", Name: "死亡谷炼炉", NameEn: "Death Valley", Element: "fire", BonusType: CaveBonusMaterial, BonusValue: 25, Desc: "极端炎热锻造天材，天材地宝产出极丰", Latitude: 36.5, Longitude: -116.9},
+	"great_smoky":       {ID: "great_smoky", Name: "大烟山隐府", NameEn: "Great Smoky Mountains", Element: "wood", BonusType: CaveBonusCultivation, BonusValue: 10, Desc: "云雾缭绕古山，木灵之气滋养", Latitude: 35.6, Longitude: -83.5},
+	"glacier":           {ID: "glacier", Name: "冰川仙境", NameEn: "Glacier NP", Element: "water", BonusType: CaveBonusCultivation, BonusValue: 12, Desc: "千年冰川蕴含水系仙机", Latitude: 48.7, Longitude: -113.8},
+	"hawaii_volcanoes":  {ID: "hawaii_volcanoes", Name: "夏威夷火山道场", NameEn: "Hawaii Volcanoes", Element: "fire", BonusType: CaveBonusBreakthrough, BonusValue: 5, Desc: "活火山之力助力境界突破", Latitude: 19.4, Longitude: -155.3},
+	"niagara":           {ID: "niagara", Name: "尼亚加拉瀑布洞", NameEn: "Niagara Falls", Element: "water", BonusType: CaveBonusSpiritStone, BonusValue: 18, Desc: "磅礴瀑布之下，水灵聚石", Latitude: 43.1, Longitude: -79.1},
+	"zion":              {ID: "zion", Name: "锡安峡谷", NameEn: "Zion NP", Element: "earth", BonusType: CaveBonusCultivation, BonusValue: 10, Desc: "红岩峡谷土系灵气浓郁", Latitude: 37.3, Longitude: -113.0},
+	"bryce_canyon":      {ID: "bryce_canyon", Name: "布莱斯峡谷", NameEn: "Bryce Canyon", Element: "earth", BonusType: CaveBonusMaterial, BonusValue: 20, Desc: "奇特地貌孕育稀有天材地宝", Latitude: 37.6, Longitude: -112.2},
+	"olympic":           {ID: "olympic", Name: "奥林匹克云峰", NameEn: "Olympic NP", Element: "wood", BonusType: CaveBonusCultivation, BonusValue: 8, Desc: "雨林生态木灵丰沛", Latitude: 47.8, Longitude: -123.6},
+	"acadia":            {ID: "acadia", Name: "阿卡迪亚海崖", NameEn: "Acadia NP", Element: "water", BonusType: CaveBonusSpiritStone, BonusValue: 15, Desc: "海崖之上水灵汇聚成石", Latitude: 44.3, Longitude: -68.2},
+	"sequoia":           {ID: "sequoia", Name: "红杉仙木林", NameEn: "Sequoia NP", Element: "wood", BonusType: CaveBonusCultivation, BonusValue: 15, Desc: "万年红杉木灵之气直冲云霄", Latitude: 36.5, Longitude: -118.6},
+	"joshua_tree":       {ID: "joshua_tree", Name: "约书亚树荒原", NameEn: "Joshua Tree", Element: "metal", BonusType: CaveBonusMaterial, BonusValue: 15, Desc: "金系荒漠蕴藏丰富矿脉天材", Latitude: 33.9, Longitude: -116.0},
+	"carlsbad":          {ID: "carlsbad", Name: "卡尔斯巴德地窟", NameEn: "Carlsbad Caverns", Element: "earth", BonusType: CaveBonusCultivation, BonusValue: 8, Desc: "地下洞窟土系灵气沉积", Latitude: 32.2, Longitude: -104.4},
+	"white_sands":       {ID: "white_sands", Name: "白沙幻境", NameEn: "White Sands", Element: "metal", BonusType: CaveBonusCultivation, BonusValue: 10, Desc: "纯白沙漠金系灵气奇特", Latitude: 32.8, Longitude: -106.2},
+	"painted_desert":    {ID: "painted_desert", Name: "彩绘沙漠", NameEn: "Painted Desert", Element: "fire", BonusType: CaveBonusMaterial, BonusValue: 18, Desc: "五彩岩层火系天材丰盛", Latitude: 35.1, Longitude: -109.8},
+	"craters_moon":      {ID: "craters_moon", Name: "月亮火山坑", NameEn: "Craters of the Moon", Element: "fire", BonusType: CaveBonusCultivation, BonusValue: 12, Desc: "熔岩地貌火系灵气异常活跃", Latitude: 43.4, Longitude: -113.5},
+	"great_sand_dunes":  {ID: "great_sand_dunes", Name: "大沙丘仙台", NameEn: "Great Sand Dunes", Element: "earth", BonusType: CaveBonusCultivation, BonusValue: 8, Desc: "大陆高处土系灵气聚集", Latitude: 37.7, Longitude: -105.5},
+	"saguaro":           {ID: "saguaro", Name: "仙人掌森林", NameEn: "Saguaro NP", Element: "wood", BonusType: CaveBonusMaterial, BonusValue: 15, Desc: "沙漠木系奇植孕育天材", Latitude: 32.3, Longitude: -111.0},
+	"canyonlands":       {ID: "canyonlands", Name: "峡谷地迷宫", NameEn: "Canyonlands", Element: "earth", BonusType: CaveBonusSpiritStone, BonusValue: 12, Desc: "峡谷迷宫藏匿灵石脉络", Latitude: 38.2, Longitude: -109.9},
+	"mt_rainier":        {ID: "mt_rainier", Name: "雷尼尔雪峰", NameEn: "Mt. Rainier", Element: "water", BonusType: CaveBonusCultivation, BonusValue: 10, Desc: "冰雪覆盖高峰水系灵气浓厚", Latitude: 46.9, Longitude: -121.7},
+	"mt_st_helens":      {ID: "mt_st_helens", Name: "圣海伦火山", NameEn: "Mt. St. Helens", Element: "fire", BonusType: CaveBonusMaterial, BonusValue: 20, Desc: "活火山爆发遗迹火系天材极丰", Latitude: 46.2, Longitude: -122.2},
+	"everglades":        {ID: "everglades", Name: "大沼泽秘地", NameEn: "Everglades", Element: "water", BonusType: CaveBonusCultivation, BonusValue: 8, Desc: "热带湿地水系灵气滋润", Latitude: 25.3, Longitude: -80.9},
+	"mammoth_cave":      {ID: "mammoth_cave", Name: "猛犸洞天", NameEn: "Mammoth Cave", Element: "earth", BonusType: CaveBonusSpiritStone, BonusValue: 10, Desc: "世界最长洞穴系统土系灵石遍布", Latitude: 37.2, Longitude: -86.1},
+	"cape_cod":          {ID: "cape_cod", Name: "科德角海府", NameEn: "Cape Cod", Element: "water", BonusType: CaveBonusSpiritStone, BonusValue: 15, Desc: "海湾水系灵力汇聚成石", Latitude: 41.7, Longitude: -70.0},
+	"big_sur":           {ID: "big_sur", Name: "大苏尔仙崖", NameEn: "Big Sur", Element: "metal", BonusType: CaveBonusCultivation, BonusValue: 12, Desc: "绝壁金系灵气磅礴", Latitude: 36.3, Longitude: -121.9},
+	"badlands":          {ID: "badlands", Name: "蒙大拿草原", NameEn: "Badlands", Element: "metal", BonusType: CaveBonusMaterial, BonusValue: 12, Desc: "荒凉大地金系矿脉隐藏其中", Latitude: 43.9, Longitude: -102.3},
 }
 
 // CaveYearlyReward returns the yearly reward for a cave occupant
@@ -679,10 +731,160 @@ type CityRealm struct {
 	BaseSpiritStone int64
 	BaseMaterials  int // count per element
 	Desc           string
+	Latitude       float64
+	Longitude      float64
 }
 
-// encounter types for narrative seeds
-var EncounterTypes = []string{"ancient_ruin", "boss_monster", "treasure_cache", "mysterious_merchant", "faction_conflict"}
+// encounter types for narrative seeds (extended with weather_phenomenon)
+var EncounterTypes = []string{"ancient_ruin", "boss_monster", "treasure_cache", "mysterious_merchant", "faction_conflict", "weather_phenomenon"}
+
+// CaveNarrativeHints provides localized event hints for caves
+var CaveNarrativeHints = map[string]map[string]string{
+	"yellowstone": {
+		"boss_monster":       "地底传来轰鸣，一头远古火熊从间歇泉中腾空而起...",
+		"weather_phenomenon": "地热泉群突然同时喷涌，形成遮天蔽日的火系灵气云柱...",
+		"ancient_ruin":       "间歇泉下方隐藏着一处印第安火修士的古老圣坛...",
+		"treasure_cache":     "火山喷口边缘发现一枚封印在硫磺中的火系灵晶原石...",
+		"mysterious_merchant": "一名身着牛仔皮革的老者从温泉中走来，手持火系法器...",
+		"faction_conflict":   "黄石仙域的占领者与远道而来的挑战者在间歇泉前对峙...",
+	},
+	"grand_canyon": {
+		"ancient_ruin":       "峡谷深处发现了纳瓦霍族修士留下的土系传承壁画...",
+		"boss_monster":       "一只巨型秃鹰从峡谷气流中俯冲而下，双翅扇起土系旋风...",
+		"weather_phenomenon": "峡谷中形成了罕见的土系灵气旋涡，将周围天材地宝吸附成球...",
+		"treasure_cache":     "科罗拉多河改道露出了一处淘金时代修士埋藏的宝库...",
+		"mysterious_merchant": "一名驾着骡子的商人从峡谷小道走来，驮着稀有的土系矿石...",
+		"faction_conflict":   "大峡谷土系洞府引来多方势力角逐，局势剑拔弩张...",
+	},
+	"hawaii_volcanoes": {
+		"boss_monster":       "基拉韦厄火山口喷出一头熔岩火蜥蜴，体长数丈...",
+		"weather_phenomenon": "火山喷发与太平洋气流交汇，形成罕见的水火交融天象...",
+		"ancient_ruin":       "熔岩隧道深处发现了夏威夷原住民祭司的火系修炼秘室...",
+		"treasure_cache":     "新流出的岩浆凝固后，内含一枚天然形成的火系灵丹...",
+		"mysterious_merchant": "一名戴着花环的老人从火山口走来，说是能以火石换取传承...",
+		"faction_conflict":   "火山道场乃破境圣地，数位修士同时到来，难免一场争夺...",
+	},
+	"niagara": {
+		"ancient_ruin":       "瀑布背后的洞穴中藏有易洛魁族水修士的传承石刻...",
+		"boss_monster":       "瀑布激流中涌现一条水系蛟龙，水压足以洞穿金铁...",
+		"weather_phenomenon": "瀑布在月光下形成彩虹光柱，水系灵气瞬间暴涨数倍...",
+		"treasure_cache":     "瀑布底部的深潭中沉睡着一批被遗忘的水系灵石矿...",
+		"mysterious_merchant": "身着渔夫外套的散修在瀑布旁垂钓，钓上来的都是灵草...",
+		"faction_conflict":   "美加边境的门派为瀑布洞府归属权展开激烈交涉...",
+	},
+	"glacier": {
+		"boss_monster":       "冰川深处惊醒了一只冰封千年的雪熊，寒气凛冽...",
+		"weather_phenomenon": "极光在冰原上空凝聚成巨大的水系阵法，将整片天地染成绿色...",
+		"ancient_ruin":       "融冰中露出了黑脚族冰修士的冬眠洞穴，内有传承...",
+		"treasure_cache":     "冰川融水中漂来一枚包裹在冰晶中的水系宝珠...",
+		"mysterious_merchant": "冰原上独自跋涉的行商摊开皮草，里面全是水系天材...",
+		"faction_conflict":   "两支修仙队伍在冰川仙境狭路相逢，剑拔弩张...",
+	},
+	"everglades": {
+		"boss_monster":       "大沼泽深处一条古鳄从水中抬头，眼中闪烁着灵智...",
+		"weather_phenomenon": "热带气旋掠过，大沼泽水系灵气短暂爆发至极值...",
+		"ancient_ruin":       "沼泽底部发现了塞米诺尔族巫医的水木双修圣坛...",
+		"treasure_cache":     "鳄鱼聚集之处，竟是一处被保护的天然灵药圃...",
+		"mysterious_merchant": "一名戴着宽边帽的老者坐在独木舟上兜售稀有水系草药...",
+		"faction_conflict":   "佛罗里达门派与外来修士为大沼泽探索权起了冲突...",
+	},
+}
+
+// GetCaveNarrativeHint returns a localized narrative hint for a cave event
+func GetCaveNarrativeHint(caveID, encounterType, element string) string {
+	if hints, ok := CaveNarrativeHints[caveID]; ok {
+		if hint, ok := hints[encounterType]; ok {
+			return hint
+		}
+	}
+	cave, ok := LocationCaves[caveID]
+	if !ok {
+		return "在此地遭遇了神秘事件..."
+	}
+	// Fallback generic hints
+	switch encounterType {
+	case "boss_monster":
+		return fmt.Sprintf("在【%s】遭遇了一头强大的%s系妖兽...", cave.Name, ElementChinese(element))
+	case "ancient_ruin":
+		return fmt.Sprintf("在【%s】发现了上古修士遗迹，似乎与美国原住民传承有关...", cave.Name)
+	case "treasure_cache":
+		return fmt.Sprintf("在【%s】发现了一处隐藏的宝藏，散发着%s系灵气...", cave.Name, ElementChinese(element))
+	case "mysterious_merchant":
+		return fmt.Sprintf("在【%s】遇到了一位神秘商人，愿以灵石换取稀有材料...", cave.Name)
+	case "faction_conflict":
+		return fmt.Sprintf("在【%s】遭遇了门派冲突，各方势力角逐此地...", cave.Name)
+	case "weather_phenomenon":
+		return fmt.Sprintf("在【%s】目睹了天象奇观，%s系灵气暴涨...", cave.Name, ElementChinese(element))
+	}
+	return fmt.Sprintf("在【%s】遭遇了神秘事件...", cave.Name)
+}
+
+// GenerateCaveEventSeed generates an event seed when leaving a cave
+func GenerateCaveEventSeed(caveID string, playerRealm string, yearsOccupied int) map[string]interface{} {
+	cave, ok := LocationCaves[caveID]
+	if !ok {
+		return nil
+	}
+	encounterType := EncounterTypes[rand.Intn(len(EncounterTypes))]
+	hint := GetCaveNarrativeHint(caveID, encounterType, cave.Element)
+
+	// Scale drops based on realm order and years occupied
+	realmOrder := 0
+	if tier, ok := RealmTiers[playerRealm]; ok {
+		realmOrder = tier.Order
+	}
+	baseStone := int64((realmOrder+1)*50 + yearsOccupied*20)
+	baseMat := int64((realmOrder+1)*3 + yearsOccupied)
+
+	return map[string]interface{}{
+		"location":       cave.Name,
+		"location_id":    cave.ID,
+		"location_type":  "cave",
+		"element":        ElementChinese(cave.Element),
+		"encounter_type": encounterType,
+		"drops": map[string]interface{}{
+			"spirit_stone":        baseStone + rand.Int63n(baseStone/2+1),
+			"spirit_material_qty": baseMat + rand.Int63n(baseMat/2+1),
+			"material_element":    cave.Element,
+		},
+		"narrative_hint": hint,
+	}
+}
+
+// GenerateCityRealmEventSeed generates an event seed when leaving a city realm
+func GenerateCityRealmEventSeed(cityID string, playerRealm string, durationSec int) map[string]interface{} {
+	cr, ok := CityRealms[cityID]
+	if !ok {
+		return nil
+	}
+	encounterType := EncounterTypes[rand.Intn(len(EncounterTypes))]
+	primaryElement := cr.Elements[0]
+
+	hint := "在" + cr.Name + "探索中发现了神秘的灵气涌动"
+	if hints, ok := CityNarrativeHints[cityID]; ok && len(hints) > 0 {
+		hint = hints[rand.Intn(len(hints))]
+	}
+
+	realmOrder := 0
+	if tier, ok := RealmTiers[playerRealm]; ok {
+		realmOrder = tier.Order
+	}
+	baseStone := int64((realmOrder+1)*30 + durationSec/300)
+	baseXP := int64((realmOrder+1)*5000 + int64(durationSec)*10)
+
+	return map[string]interface{}{
+		"location":       cr.Name,
+		"location_id":    cr.ID,
+		"location_type":  "city_realm",
+		"element":        ElementChinese(primaryElement),
+		"encounter_type": encounterType,
+		"drops": map[string]interface{}{
+			"spirit_stone":    baseStone + rand.Int63n(baseStone/2+1),
+			"cultivation_xp":  baseXP + rand.Int63n(baseXP/5+1),
+		},
+		"narrative_hint": hint,
+	}
+}
 
 var CityRealmOrder = []string{
 	"new_york", "los_angeles", "chicago", "houston", "phoenix",
@@ -694,36 +896,36 @@ var CityRealmOrder = []string{
 }
 
 var CityRealms = map[string]CityRealm{
-	"new_york":       {ID: "new_york", Name: "纽约·曼哈顿", NameEn: "New York", Elements: []string{"metal"}, DurationSec: 8 * 3600, SoulCost: 12, BaseXP: 4500, BaseSpiritStone: 200, BaseMaterials: 2, Desc: "金融之都，金系灵气极为浓郁"},
-	"los_angeles":    {ID: "los_angeles", Name: "洛杉矶·好莱坞", NameEn: "Los Angeles", Elements: []string{"fire"}, DurationSec: 6 * 3600, SoulCost: 10, BaseXP: 3500, BaseSpiritStone: 160, BaseMaterials: 2, Desc: "娱乐之都，火系灵气热烈奔放"},
-	"chicago":        {ID: "chicago", Name: "芝加哥·风城", NameEn: "Chicago", Elements: []string{"metal", "water"}, DurationSec: 5 * 3600, SoulCost: 9, BaseXP: 3000, BaseSpiritStone: 140, BaseMaterials: 2, Desc: "风城双修，金水交融"},
-	"houston":        {ID: "houston", Name: "休斯顿·炼油城", NameEn: "Houston", Elements: []string{"fire", "earth"}, DurationSec: 4 * 3600, SoulCost: 8, BaseXP: 2500, BaseSpiritStone: 120, BaseMaterials: 2, Desc: "石油之城，火土双系灵气旺盛"},
-	"phoenix":        {ID: "phoenix", Name: "凤凰城·烈焰", NameEn: "Phoenix", Elements: []string{"fire"}, DurationSec: 3 * 3600, SoulCost: 7, BaseXP: 2000, BaseSpiritStone: 100, BaseMaterials: 1, Desc: "沙漠火城，火系灵气炽热"},
-	"philadelphia":   {ID: "philadelphia", Name: "费城·古都", NameEn: "Philadelphia", Elements: []string{"earth"}, DurationSec: 3 * 3600, SoulCost: 7, BaseXP: 2000, BaseSpiritStone: 100, BaseMaterials: 1, Desc: "历史古都，土系灵气深厚"},
-	"san_antonio":    {ID: "san_antonio", Name: "圣安东尼奥·边城", NameEn: "San Antonio", Elements: []string{"earth"}, DurationSec: 3 * 3600, SoulCost: 6, BaseXP: 1800, BaseSpiritStone: 90, BaseMaterials: 1, Desc: "边境之城，土系灵气绵延"},
-	"san_diego":      {ID: "san_diego", Name: "圣迭戈·海湾", NameEn: "San Diego", Elements: []string{"water"}, DurationSec: 3 * 3600, SoulCost: 6, BaseXP: 1800, BaseSpiritStone: 90, BaseMaterials: 1, Desc: "海湾城市，水系灵气充盈"},
-	"dallas":         {ID: "dallas", Name: "达拉斯·牛仔城", NameEn: "Dallas", Elements: []string{"metal"}, DurationSec: 3 * 3600, SoulCost: 7, BaseXP: 2000, BaseSpiritStone: 100, BaseMaterials: 1, Desc: "金融牛仔城，金系灵气聚集"},
-	"san_francisco":  {ID: "san_francisco", Name: "旧金山·金门", NameEn: "San Francisco", Elements: []string{"water", "metal"}, DurationSec: 2 * 3600, SoulCost: 6, BaseXP: 1500, BaseSpiritStone: 80, BaseMaterials: 1, Desc: "金门之城，水金交汇"},
-	"seattle":        {ID: "seattle", Name: "西雅图·雨城", NameEn: "Seattle", Elements: []string{"water", "wood"}, DurationSec: 2 * 3600, SoulCost: 5, BaseXP: 1200, BaseSpiritStone: 70, BaseMaterials: 1, Desc: "常年烟雨，水木共生"},
-	"boston":         {ID: "boston", Name: "波士顿·学城", NameEn: "Boston", Elements: []string{"water"}, DurationSec: 2 * 3600, SoulCost: 5, BaseXP: 1200, BaseSpiritStone: 70, BaseMaterials: 1, Desc: "学术重镇，水系灵气清澈"},
-	"denver":         {ID: "denver", Name: "丹佛·高原", NameEn: "Denver", Elements: []string{"metal", "wood"}, DurationSec: 2 * 3600, SoulCost: 5, BaseXP: 1200, BaseSpiritStone: 70, BaseMaterials: 1, Desc: "高原之城，金木双修"},
-	"miami":          {ID: "miami", Name: "迈阿密·热浪", NameEn: "Miami", Elements: []string{"water", "fire"}, DurationSec: int(1.5 * 3600), SoulCost: 4, BaseXP: 900, BaseSpiritStone: 55, BaseMaterials: 1, Desc: "热带海滨，水火激荡"},
-	"atlanta":        {ID: "atlanta", Name: "亚特兰大·枢纽", NameEn: "Atlanta", Elements: []string{"wood", "fire"}, DurationSec: int(1.5 * 3600), SoulCost: 4, BaseXP: 900, BaseSpiritStone: 55, BaseMaterials: 1, Desc: "南方枢纽，木火旺盛"},
-	"detroit":        {ID: "detroit", Name: "底特律·钢铁城", NameEn: "Detroit", Elements: []string{"metal"}, DurationSec: 2 * 3600, SoulCost: 5, BaseXP: 1200, BaseSpiritStone: 70, BaseMaterials: 1, Desc: "汽车钢铁之城，金系灵气厚重"},
-	"minneapolis":    {ID: "minneapolis", Name: "明尼阿波利斯·湖城", NameEn: "Minneapolis", Elements: []string{"water"}, DurationSec: int(1.5 * 3600), SoulCost: 4, BaseXP: 900, BaseSpiritStone: 55, BaseMaterials: 1, Desc: "千湖之城，水系灵气充裕"},
-	"st_louis":       {ID: "st_louis", Name: "圣路易斯·门城", NameEn: "St. Louis", Elements: []string{"earth"}, DurationSec: 1 * 3600, SoulCost: 3, BaseXP: 600, BaseSpiritStone: 40, BaseMaterials: 1, Desc: "西大门土系灵气稳固"},
-	"new_orleans":    {ID: "new_orleans", Name: "新奥尔良·爵士城", NameEn: "New Orleans", Elements: []string{"water", "wood"}, DurationSec: int(1.5 * 3600), SoulCost: 4, BaseXP: 900, BaseSpiritStone: 55, BaseMaterials: 1, Desc: "爵士之都，水木交融神秘"},
-	"portland":       {ID: "portland", Name: "波特兰·玫瑰城", NameEn: "Portland", Elements: []string{"wood", "water"}, DurationSec: 2 * 3600, SoulCost: 5, BaseXP: 1200, BaseSpiritStone: 70, BaseMaterials: 1, Desc: "玫瑰花城，木水滋养"},
-	"las_vegas":      {ID: "las_vegas", Name: "拉斯维加斯·幻城", NameEn: "Las Vegas", Elements: []string{"fire", "metal"}, DurationSec: 2 * 3600, SoulCost: 5, BaseXP: 1200, BaseSpiritStone: 70, BaseMaterials: 1, Desc: "不夜幻城，火金交织"},
-	"salt_lake_city": {ID: "salt_lake_city", Name: "盐湖城·圣地", NameEn: "Salt Lake City", Elements: []string{"earth"}, DurationSec: 1 * 3600, SoulCost: 3, BaseXP: 600, BaseSpiritStone: 40, BaseMaterials: 1, Desc: "盐湖圣地，土系灵气净化"},
-	"albuquerque":    {ID: "albuquerque", Name: "阿尔伯克基·热气球", NameEn: "Albuquerque", Elements: []string{"earth", "fire"}, DurationSec: int(1.5 * 3600), SoulCost: 4, BaseXP: 900, BaseSpiritStone: 55, BaseMaterials: 1, Desc: "沙漠热气球，土火弥漫"},
-	"austin":         {ID: "austin", Name: "奥斯汀·创新城", NameEn: "Austin", Elements: []string{"wood", "fire"}, DurationSec: 2 * 3600, SoulCost: 5, BaseXP: 1200, BaseSpiritStone: 70, BaseMaterials: 1, Desc: "创新之城，木火并进"},
-	"nashville":      {ID: "nashville", Name: "纳什维尔·音乐城", NameEn: "Nashville", Elements: []string{"wood"}, DurationSec: 2 * 3600, SoulCost: 4, BaseXP: 1000, BaseSpiritStone: 60, BaseMaterials: 1, Desc: "音乐之都，木系灵气悠扬"},
-	"charlotte":      {ID: "charlotte", Name: "夏洛特·金融城", NameEn: "Charlotte", Elements: []string{"wood", "earth"}, DurationSec: 2 * 3600, SoulCost: 4, BaseXP: 1000, BaseSpiritStone: 60, BaseMaterials: 1, Desc: "南方金融，木土平衡"},
-	"columbus":       {ID: "columbus", Name: "哥伦布·心城", NameEn: "Columbus", Elements: []string{"earth"}, DurationSec: 2 * 3600, SoulCost: 4, BaseXP: 1000, BaseSpiritStone: 60, BaseMaterials: 1, Desc: "大陆心脏，土系灵气平稳"},
-	"indianapolis":   {ID: "indianapolis", Name: "印第安纳波利斯·赛城", NameEn: "Indianapolis", Elements: []string{"earth", "metal"}, DurationSec: 2 * 3600, SoulCost: 4, BaseXP: 1000, BaseSpiritStone: 60, BaseMaterials: 1, Desc: "赛道之城，土金交叠"},
-	"jacksonville":   {ID: "jacksonville", Name: "杰克逊维尔·河城", NameEn: "Jacksonville", Elements: []string{"water", "wood"}, DurationSec: 2 * 3600, SoulCost: 4, BaseXP: 1000, BaseSpiritStone: 60, BaseMaterials: 1, Desc: "河流之城，水木共融"},
-	"baltimore":      {ID: "baltimore", Name: "巴尔的摩·港城", NameEn: "Baltimore", Elements: []string{"water"}, DurationSec: int(1.5 * 3600), SoulCost: 4, BaseXP: 900, BaseSpiritStone: 55, BaseMaterials: 1, Desc: "海港之城，水系灵气汇聚"},
+	"new_york":       {ID: "new_york", Name: "纽约·曼哈顿", NameEn: "New York", Elements: []string{"metal"}, DurationSec: 8 * 3600, SoulCost: 12, BaseXP: 4500, BaseSpiritStone: 200, BaseMaterials: 2, Desc: "金融之都，金系灵气极为浓郁", Latitude: 40.7, Longitude: -74.0},
+	"los_angeles":    {ID: "los_angeles", Name: "洛杉矶·好莱坞", NameEn: "Los Angeles", Elements: []string{"fire"}, DurationSec: 6 * 3600, SoulCost: 10, BaseXP: 3500, BaseSpiritStone: 160, BaseMaterials: 2, Desc: "娱乐之都，火系灵气热烈奔放", Latitude: 34.1, Longitude: -118.2},
+	"chicago":        {ID: "chicago", Name: "芝加哥·风城", NameEn: "Chicago", Elements: []string{"metal", "water"}, DurationSec: 5 * 3600, SoulCost: 9, BaseXP: 3000, BaseSpiritStone: 140, BaseMaterials: 2, Desc: "风城双修，金水交融", Latitude: 41.9, Longitude: -87.6},
+	"houston":        {ID: "houston", Name: "休斯顿·炼油城", NameEn: "Houston", Elements: []string{"fire", "earth"}, DurationSec: 4 * 3600, SoulCost: 8, BaseXP: 2500, BaseSpiritStone: 120, BaseMaterials: 2, Desc: "石油之城，火土双系灵气旺盛", Latitude: 29.8, Longitude: -95.4},
+	"phoenix":        {ID: "phoenix", Name: "凤凰城·烈焰", NameEn: "Phoenix", Elements: []string{"fire"}, DurationSec: 3 * 3600, SoulCost: 7, BaseXP: 2000, BaseSpiritStone: 100, BaseMaterials: 1, Desc: "沙漠火城，火系灵气炽热", Latitude: 33.4, Longitude: -112.1},
+	"philadelphia":   {ID: "philadelphia", Name: "费城·古都", NameEn: "Philadelphia", Elements: []string{"earth"}, DurationSec: 3 * 3600, SoulCost: 7, BaseXP: 2000, BaseSpiritStone: 100, BaseMaterials: 1, Desc: "历史古都，土系灵气深厚", Latitude: 40.0, Longitude: -75.2},
+	"san_antonio":    {ID: "san_antonio", Name: "圣安东尼奥·边城", NameEn: "San Antonio", Elements: []string{"earth"}, DurationSec: 3 * 3600, SoulCost: 6, BaseXP: 1800, BaseSpiritStone: 90, BaseMaterials: 1, Desc: "边境之城，土系灵气绵延", Latitude: 29.4, Longitude: -98.5},
+	"san_diego":      {ID: "san_diego", Name: "圣迭戈·海湾", NameEn: "San Diego", Elements: []string{"water"}, DurationSec: 3 * 3600, SoulCost: 6, BaseXP: 1800, BaseSpiritStone: 90, BaseMaterials: 1, Desc: "海湾城市，水系灵气充盈", Latitude: 32.7, Longitude: -117.2},
+	"dallas":         {ID: "dallas", Name: "达拉斯·牛仔城", NameEn: "Dallas", Elements: []string{"metal"}, DurationSec: 3 * 3600, SoulCost: 7, BaseXP: 2000, BaseSpiritStone: 100, BaseMaterials: 1, Desc: "金融牛仔城，金系灵气聚集", Latitude: 32.8, Longitude: -96.8},
+	"san_francisco":  {ID: "san_francisco", Name: "旧金山·金门", NameEn: "San Francisco", Elements: []string{"water", "metal"}, DurationSec: 2 * 3600, SoulCost: 6, BaseXP: 1500, BaseSpiritStone: 80, BaseMaterials: 1, Desc: "金门之城，水金交汇", Latitude: 37.8, Longitude: -122.4},
+	"seattle":        {ID: "seattle", Name: "西雅图·雨城", NameEn: "Seattle", Elements: []string{"water", "wood"}, DurationSec: 2 * 3600, SoulCost: 5, BaseXP: 1200, BaseSpiritStone: 70, BaseMaterials: 1, Desc: "常年烟雨，水木共生", Latitude: 47.6, Longitude: -122.3},
+	"boston":         {ID: "boston", Name: "波士顿·学城", NameEn: "Boston", Elements: []string{"water"}, DurationSec: 2 * 3600, SoulCost: 5, BaseXP: 1200, BaseSpiritStone: 70, BaseMaterials: 1, Desc: "学术重镇，水系灵气清澈", Latitude: 42.4, Longitude: -71.1},
+	"denver":         {ID: "denver", Name: "丹佛·高原", NameEn: "Denver", Elements: []string{"metal", "wood"}, DurationSec: 2 * 3600, SoulCost: 5, BaseXP: 1200, BaseSpiritStone: 70, BaseMaterials: 1, Desc: "高原之城，金木双修", Latitude: 39.7, Longitude: -104.9},
+	"miami":          {ID: "miami", Name: "迈阿密·热浪", NameEn: "Miami", Elements: []string{"water", "fire"}, DurationSec: int(1.5 * 3600), SoulCost: 4, BaseXP: 900, BaseSpiritStone: 55, BaseMaterials: 1, Desc: "热带海滨，水火激荡", Latitude: 25.8, Longitude: -80.2},
+	"atlanta":        {ID: "atlanta", Name: "亚特兰大·枢纽", NameEn: "Atlanta", Elements: []string{"wood", "fire"}, DurationSec: int(1.5 * 3600), SoulCost: 4, BaseXP: 900, BaseSpiritStone: 55, BaseMaterials: 1, Desc: "南方枢纽，木火旺盛", Latitude: 33.7, Longitude: -84.4},
+	"detroit":        {ID: "detroit", Name: "底特律·钢铁城", NameEn: "Detroit", Elements: []string{"metal"}, DurationSec: 2 * 3600, SoulCost: 5, BaseXP: 1200, BaseSpiritStone: 70, BaseMaterials: 1, Desc: "汽车钢铁之城，金系灵气厚重", Latitude: 42.3, Longitude: -83.0},
+	"minneapolis":    {ID: "minneapolis", Name: "明尼阿波利斯·湖城", NameEn: "Minneapolis", Elements: []string{"water"}, DurationSec: int(1.5 * 3600), SoulCost: 4, BaseXP: 900, BaseSpiritStone: 55, BaseMaterials: 1, Desc: "千湖之城，水系灵气充裕", Latitude: 44.9, Longitude: -93.2},
+	"st_louis":       {ID: "st_louis", Name: "圣路易斯·门城", NameEn: "St. Louis", Elements: []string{"earth"}, DurationSec: 1 * 3600, SoulCost: 3, BaseXP: 600, BaseSpiritStone: 40, BaseMaterials: 1, Desc: "西大门土系灵气稳固", Latitude: 38.6, Longitude: -90.2},
+	"new_orleans":    {ID: "new_orleans", Name: "新奥尔良·爵士城", NameEn: "New Orleans", Elements: []string{"water", "wood"}, DurationSec: int(1.5 * 3600), SoulCost: 4, BaseXP: 900, BaseSpiritStone: 55, BaseMaterials: 1, Desc: "爵士之都，水木交融神秘", Latitude: 30.0, Longitude: -90.1},
+	"portland":       {ID: "portland", Name: "波特兰·玫瑰城", NameEn: "Portland", Elements: []string{"wood", "water"}, DurationSec: 2 * 3600, SoulCost: 5, BaseXP: 1200, BaseSpiritStone: 70, BaseMaterials: 1, Desc: "玫瑰花城，木水滋养", Latitude: 45.5, Longitude: -122.7},
+	"las_vegas":      {ID: "las_vegas", Name: "拉斯维加斯·幻城", NameEn: "Las Vegas", Elements: []string{"fire", "metal"}, DurationSec: 2 * 3600, SoulCost: 5, BaseXP: 1200, BaseSpiritStone: 70, BaseMaterials: 1, Desc: "不夜幻城，火金交织", Latitude: 36.2, Longitude: -115.2},
+	"salt_lake_city": {ID: "salt_lake_city", Name: "盐湖城·圣地", NameEn: "Salt Lake City", Elements: []string{"earth"}, DurationSec: 1 * 3600, SoulCost: 3, BaseXP: 600, BaseSpiritStone: 40, BaseMaterials: 1, Desc: "盐湖圣地，土系灵气净化", Latitude: 40.8, Longitude: -111.9},
+	"albuquerque":    {ID: "albuquerque", Name: "阿尔伯克基·热气球", NameEn: "Albuquerque", Elements: []string{"earth", "fire"}, DurationSec: int(1.5 * 3600), SoulCost: 4, BaseXP: 900, BaseSpiritStone: 55, BaseMaterials: 1, Desc: "沙漠热气球，土火弥漫", Latitude: 35.1, Longitude: -106.7},
+	"austin":         {ID: "austin", Name: "奥斯汀·创新城", NameEn: "Austin", Elements: []string{"wood", "fire"}, DurationSec: 2 * 3600, SoulCost: 5, BaseXP: 1200, BaseSpiritStone: 70, BaseMaterials: 1, Desc: "创新之城，木火并进", Latitude: 30.3, Longitude: -97.7},
+	"nashville":      {ID: "nashville", Name: "纳什维尔·音乐城", NameEn: "Nashville", Elements: []string{"wood"}, DurationSec: 2 * 3600, SoulCost: 4, BaseXP: 1000, BaseSpiritStone: 60, BaseMaterials: 1, Desc: "音乐之都，木系灵气悠扬", Latitude: 36.2, Longitude: -86.8},
+	"charlotte":      {ID: "charlotte", Name: "夏洛特·金融城", NameEn: "Charlotte", Elements: []string{"wood", "earth"}, DurationSec: 2 * 3600, SoulCost: 4, BaseXP: 1000, BaseSpiritStone: 60, BaseMaterials: 1, Desc: "南方金融，木土平衡", Latitude: 35.2, Longitude: -80.8},
+	"columbus":       {ID: "columbus", Name: "哥伦布·心城", NameEn: "Columbus", Elements: []string{"earth"}, DurationSec: 2 * 3600, SoulCost: 4, BaseXP: 1000, BaseSpiritStone: 60, BaseMaterials: 1, Desc: "大陆心脏，土系灵气平稳", Latitude: 40.0, Longitude: -82.9},
+	"indianapolis":   {ID: "indianapolis", Name: "印第安纳波利斯·赛城", NameEn: "Indianapolis", Elements: []string{"earth", "metal"}, DurationSec: 2 * 3600, SoulCost: 4, BaseXP: 1000, BaseSpiritStone: 60, BaseMaterials: 1, Desc: "赛道之城，土金交叠", Latitude: 39.8, Longitude: -86.2},
+	"jacksonville":   {ID: "jacksonville", Name: "杰克逊维尔·河城", NameEn: "Jacksonville", Elements: []string{"water", "wood"}, DurationSec: 2 * 3600, SoulCost: 4, BaseXP: 1000, BaseSpiritStone: 60, BaseMaterials: 1, Desc: "河流之城，水木共融", Latitude: 30.3, Longitude: -81.7},
+	"baltimore":      {ID: "baltimore", Name: "巴尔的摩·港城", NameEn: "Baltimore", Elements: []string{"water"}, DurationSec: int(1.5 * 3600), SoulCost: 4, BaseXP: 900, BaseSpiritStone: 55, BaseMaterials: 1, Desc: "海港之城，水系灵气汇聚", Latitude: 39.3, Longitude: -76.6},
 }
 
 // CityNarrativeHints provides flavor hints for narrative seed generation

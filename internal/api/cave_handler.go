@@ -260,6 +260,10 @@ func (h *Handler) CaveChallenge(c *fiber.Ctx) error {
 			challengerID, currentYear, caveID,
 		)
 		h.engine.PublishCaveEvent(ctx, "cave_challenged", caveID, challengerID)
+
+		// Generate location event for the defender (被驱逐时触发)
+		generateCaveLeaveEvent(ctx, h, defenderID, caveID, currentYear)
+
 		return c.JSON(fiber.Map{
 			"success":         true,
 			"challengerWins":  true,
@@ -281,6 +285,81 @@ func (h *Handler) CaveChallenge(c *fiber.Ctx) error {
 		"occupant":       defUsername,
 		"message":        fmt.Sprintf("挑战失败！【%s】守住了！%s", cave.Name, battleDesc),
 	})
+}
+
+// POST /api/caves/:id/leave  主动离开洞府（触发随机事件）
+func (h *Handler) CaveLeave(c *fiber.Ctx) error {
+	playerID := c.Locals("playerID").(string)
+	caveID := c.Params("id")
+
+	cave, ok := game.LocationCaves[caveID]
+	if !ok {
+		return c.Status(404).JSON(fiber.Map{"error": "洞府不存在"})
+	}
+
+	ctx := context.Background()
+
+	// Verify player occupies this cave and get occupation time
+	var occupantID string
+	var occupiedAt time.Time
+	err := h.db.QueryRow(ctx,
+		`SELECT player_id, occupied_at FROM cave_occupations WHERE cave_id=$1`,
+		caveID,
+	).Scan(&occupantID, &occupiedAt)
+	if err != nil || occupantID != playerID {
+		return c.Status(400).JSON(fiber.Map{"error": "你未占领此洞府"})
+	}
+
+	// Remove occupation
+	_, _ = h.db.Exec(ctx, `DELETE FROM cave_occupations WHERE cave_id=$1`, caveID)
+	h.engine.PublishCaveEvent(ctx, "cave_vacated", caveID, playerID)
+
+	// Generate and return location event
+	var currentYear int
+	h.db.QueryRow(ctx, `SELECT current_year FROM world_state WHERE id=1`).Scan(&currentYear)
+
+	yearsOccupied := int(time.Since(occupiedAt).Minutes()/5) + 1
+	eventSeed := generateCaveLeaveEventWithYears(ctx, h, playerID, caveID, currentYear, yearsOccupied)
+
+	return c.JSON(fiber.Map{
+		"success":   true,
+		"caveId":    caveID,
+		"caveName":  cave.Name,
+		"eventSeed": eventSeed,
+		"message":   fmt.Sprintf("已离开【%s】！离开时触发随机事件...", cave.Name),
+	})
+}
+
+// generateCaveLeaveEvent generates and saves a location event when player leaves a cave (defender evicted)
+func generateCaveLeaveEvent(ctx context.Context, h *Handler, playerID, caveID string, currentYear int) map[string]interface{} {
+	return generateCaveLeaveEventWithYears(ctx, h, playerID, caveID, currentYear, 1)
+}
+
+// generateCaveLeaveEventWithYears generates a cave leave event with known years occupied
+func generateCaveLeaveEventWithYears(ctx context.Context, h *Handler, playerID, caveID string, currentYear, yearsOccupied int) map[string]interface{} {
+	cave, ok := game.LocationCaves[caveID]
+	if !ok {
+		return nil
+	}
+
+	// Get player realm
+	var playerRealm string
+	h.db.QueryRow(ctx, `SELECT realm FROM players WHERE id=$1`, playerID).Scan(&playerRealm)
+
+	seed := game.GenerateCaveEventSeed(caveID, playerRealm, yearsOccupied)
+	if seed == nil {
+		return nil
+	}
+
+	encounterType, _ := seed["encounter_type"].(string)
+
+	// Save event to DB and publish WS push
+	h.engine.SaveAndPublishLocationEvent(ctx,
+		playerID, "cave", caveID, cave.Name,
+		encounterType, cave.Element, seed, currentYear,
+	)
+
+	return seed
 }
 
 

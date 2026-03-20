@@ -264,6 +264,26 @@ func (h *Handler) CityRealmExit(c *fiber.Ctx) error {
 	// Publish realm complete event
 	h.engine.PublishRealmCompleteEvent(ctx, cityID, playerID)
 
+	// Generate extended location event seed with encounter type
+	var playerRealm string
+	h.db.QueryRow(ctx, `SELECT realm FROM players WHERE id=$1`, playerID).Scan(&playerRealm)
+
+	var currentYear int
+	h.db.QueryRow(ctx, `SELECT current_year FROM world_state WHERE id=1`).Scan(&currentYear)
+
+	extSeed := game.GenerateCityRealmEventSeed(cityID, playerRealm, cr.DurationSec)
+	if extSeed != nil {
+		encType, _ := extSeed["encounter_type"].(string)
+		element := ""
+		if len(cr.Elements) > 0 {
+			element = cr.Elements[0]
+		}
+		h.engine.SaveAndPublishLocationEvent(ctx,
+			playerID, "city_realm", cityID, cr.Name,
+			encType, element, extSeed, currentYear,
+		)
+	}
+
 	hint := ""
 	if h, ok := narrativeSeed["narrative_hint"].(string); ok {
 		hint = h
@@ -280,6 +300,7 @@ func (h *Handler) CityRealmExit(c *fiber.Ctx) error {
 			"spiritMaterials": materialSummary,
 		},
 		"narrativeSeed":   narrativeSeed,
+		"locationEvent":   extSeed,
 		"narrativeHint":   hint,
 		"message": fmt.Sprintf("【%s】秘境探索结算！获得修为%d、灵石%d。%s",
 			cr.Name, rewards["cultivation_xp"], rewards["spirit_stone"], hint),
